@@ -4,7 +4,7 @@ Ensemble Framework For Flash Flood Forecasting (EF5)
 ![image](https://user-images.githubusercontent.com/31950869/214687476-fe31f9c2-4d96-4357-9dcc-e3bb39bf15dc.png)
 
 
-![version](https://img.shields.io/badge/version-v1.3.0-blue) [![Build Status](https://travis-ci.org/HyDROSLab/EF5.svg?branch=master)](https://travis-ci.org/HyDROSLab/EF5) ![lastCommit](https://img.shields.io/github/last-commit/chrimerss/EF5)
+![version](https://img.shields.io/badge/version-v1.3.3-blue) [![Build Status](https://travis-ci.org/HyDROSLab/EF5.svg?branch=master)](https://travis-ci.org/HyDROSLab/EF5) ![lastCommit](https://img.shields.io/github/last-commit/chrimerss/EF5)
 
 EF5 was created by the Hydrometeorology and Remote Sensing Laboratory at the University of Oklahoma.
 The goal of EF5 is to have a framework for distributed hydrologic modeling that is user friendly, adaptable, expandable, all while being suitable for large scale (e.g. continental scale) modeling of flash floods with rapid forecast updates. Currently EF5 incorporates 3 water balance models including the Sacramento Soil Moisture Accouning Model (SAC-SMA), Coupled Routing and Excess Storage (CREST), and hydrophobic (HP). These water balance models can be coupled with either linear reservoir or kinematic wave routing. 
