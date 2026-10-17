@@ -51,9 +51,9 @@ bool DatedName::ProcessNameLoose(TimeUnit *freq) {
 }
 
 void DatedName::UpdateName(tm *ptm) {
-  char dateParts[6][5];
+  char dateParts[6][12]; // Room for any int, so -Wformat-overflow is happy
 
-  memset(dateParts, 0, 6 * 5); // Zero out the buffer memory
+  memset(dateParts, 0, sizeof(dateParts)); // Zero out the buffer memory
   sprintf(dateParts[0], "%04d", ptm->tm_year + 1900);
   sprintf(dateParts[1], "%02d", ptm->tm_mon + 1);
   sprintf(dateParts[2], "%02d", ptm->tm_mday);
