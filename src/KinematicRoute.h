@@ -17,6 +17,7 @@ struct KWGridNode : BasicGridNode {
   float states[STATE_KW_QTY];
 
   bool channelGridCell;
+  double flowWidth; // cell area over flow length (m)
   double slopeSqrt;
   double hillSlopeSqrt;
 
@@ -32,7 +33,7 @@ struct KWGridNode : BasicGridNode {
 
   // double previousStreamflow; //cms
   // double previousOverland;
-  double incomingWaterOverland, incomingWaterChannel;
+  double incomingWaterOverland, incomingWaterChannel; // m^3/s
 };
 
 class KWRoute : public RoutingModel {

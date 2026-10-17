@@ -13,6 +13,36 @@ static const char *stateStrings[] = {
     "IR",
 };
 
+// Solve D * q + alpha * q^beta = rhs for q >= 0. The left side increases with
+// q, so the root is unique and lies in [0, rhs / D]; Newton steps that leave
+// that bracket fall back to bisection. The tolerance is relative so small
+// flows are resolved as accurately as large ones.
+static float SolveKW(float D, float alpha, float beta, float rhs, float guess) {
+  if (!(rhs > 0.0f)) {
+    return 0.0f;
+  }
+  double lo = 0.0, hi = rhs / D;
+  if (!(alpha > 0.0f)) {
+    return hi;
+  }
+  double q = (guess > lo && guess < hi) ? guess : 0.5 * hi;
+  for (int itr = 0; itr < 60; itr++) {
+    double qBeta = pow(q, (double)beta);
+    double resError = D * q + alpha * qBeta - rhs;
+    if (fabs(resError) <= 1e-6 * rhs || hi - lo <= 1e-12 * hi) {
+      break;
+    }
+    if (resError > 0.0) {
+      hi = q;
+    } else {
+      lo = q;
+    }
+    double next = q - resError / (D + alpha * beta * qBeta / q);
+    q = (next > lo && next < hi) ? next : 0.5 * (lo + hi);
+  }
+  return q;
+}
+
 KWRoute::KWRoute() {}
 
 KWRoute::~KWRoute() {}
@@ -22,9 +52,9 @@ float KWRoute::SetObsInflow(long index, float inflow) {
   GridNode *node = &nodes->at(index);
   float prev;
   if (!node->channelGridCell) {
-    prev = cNode->states[STATE_KW_PQ] * node->horLen;
-    cNode->states[STATE_KW_PQ] = inflow / node->horLen;
-    cNode->incomingWaterOverland = inflow / node->horLen;
+    prev = cNode->states[STATE_KW_PQ] * cNode->flowWidth;
+    cNode->states[STATE_KW_PQ] = inflow / cNode->flowWidth;
+    cNode->incomingWaterOverland = inflow;
   } else {
     prev = cNode->states[STATE_KW_PQ];
     float diff = 0.0;
@@ -78,6 +108,7 @@ bool KWRoute::InitializeModel(
     KWGridNode *cNode = &(kwNodes[i]);
     cNode->slopeSqrt = pow(node->slope, 0.5f);
     cNode->hillSlopeSqrt = pow(node->slope * 0.5, 0.5f);
+    cNode->flowWidth = node->area * 1000000.0 / node->horLen; // km^2 to m^2
     cNode->incomingWater[KW_LAYER_BASEFLOW]=0.0;
     cNode->incomingWater[KW_LAYER_INTERFLOW] = 0.0;
     cNode->incomingWater[KW_LAYER_FASTFLOW] = 0.0;
@@ -210,7 +241,7 @@ bool KWRoute::Route(float stepHours, std::vector<float> *fastFlow,
     cNode->incomingWaterOverland = 0.0;
     cNode->incomingWaterChannel = 0.0;
     if (!cNode->channelGridCell) {
-      float q = cNode->incomingWater[KW_LAYER_FASTFLOW] * nodes->at(i).horLen;
+      float q = cNode->incomingWater[KW_LAYER_FASTFLOW] * cNode->flowWidth;
       q += (cNode->incomingWater[KW_LAYER_INTERFLOW] * nodes->at(i).area / 3.6);
       q += (cNode -> incomingWater[KW_LAYER_BASEFLOW]*nodes->at(i).area/3.6);
       discharge->at(i) = q; // * (stepHours * 3600.0f);
@@ -247,15 +278,14 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
 
     float A, B, C, D, E;
     float backDiffq = 0.0;
-    if (cNode->incomingWaterOverland + cNode->states[STATE_KW_PQ] > 0.0) {
-      backDiffq =
-          pow((cNode->incomingWaterOverland + cNode->states[STATE_KW_PQ]) / 2.0,
-              beta - 1.0);
+    double qIn = cNode->incomingWaterOverland / cNode->flowWidth; // m^2/s
+    if (qIn + cNode->states[STATE_KW_PQ] > 0.0) {
+      backDiffq = pow((qIn + cNode->states[STATE_KW_PQ]) / 2.0, beta - 1.0);
       if (!std::isfinite(backDiffq)) {
         backDiffq = 0.0;
       }
     }
-    A = (stepSeconds / node->horLen) * cNode->incomingWaterOverland;
+    A = (stepSeconds / node->horLen) * qIn;
     B = alpha * beta * cNode->states[STATE_KW_PQ] * backDiffq;
     C = stepSeconds * newInWater;
     D = stepSeconds / node->horLen;
@@ -263,28 +293,7 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
     float estq = (A + B + C) / (D + E); // cms/m
     float rhs = A + alpha * pow(cNode->states[STATE_KW_PQ], beta) +
                 stepSeconds * newInWater;
-    for (int itr = 0; itr < 10; itr++) {
-      float resError =
-          (stepSeconds / node->horLen) * estq + alpha * pow(estq, beta) - rhs;
-      if (!std::isfinite(resError)) {
-        resError = 0.0;
-      }
-      if (fabsf(resError) < 0.01) {
-        break;
-      }
-      float resErrorD1 =
-          (stepSeconds / node->horLen) + alpha * beta * pow(estq, beta - 1.0);
-      if (!std::isfinite(resErrorD1)) {
-        resErrorD1 = 1.0;
-      }
-      estq = estq - resError / resErrorD1;
-      if (estq < 0) {
-        estq = 0.0;
-      }
-    }
-    if (estq < 0.0) {
-      estq = 0.0;
-    }
+    estq = SolveKW(D, alpha, beta, rhs, estq);
 
     float newq = estq;
 
@@ -334,7 +343,8 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
 
     float beta = 0.6;
     float alpha = cNode->params[PARAM_KINEMATIC_ALPHA0];
-    interFlow += cNode->incomingWater[KW_LAYER_INTERFLOW];
+    interFlow += cNode->incomingWater[KW_LAYER_INTERFLOW] +
+                 cNode->incomingWater[KW_LAYER_BASEFLOW];
     // printf(" %f ", cNode->incomingWater[KW_LAYER_INTERFLOW]);
     fastFlow /= 1000.0; // mm to m
     baseFlow /= 1000.0;
@@ -344,15 +354,14 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
 
     float A, B, C, D, E;
     float backDiffq = 0.0;
-    if (cNode->incomingWaterOverland + cNode->states[STATE_KW_PO] > 0.0) {
-      backDiffq =
-          pow((cNode->incomingWaterOverland + cNode->states[STATE_KW_PO]) / 2.0,
-              beta - 1.0);
+    double qIn = cNode->incomingWaterOverland / cNode->flowWidth; // m^2/s
+    if (qIn + cNode->states[STATE_KW_PO] > 0.0) {
+      backDiffq = pow((qIn + cNode->states[STATE_KW_PO]) / 2.0, beta - 1.0);
       if (!std::isfinite(backDiffq)) {
         backDiffq = 0.0;
       }
     }
-    A = (stepSeconds / node->horLen) * cNode->incomingWaterOverland;
+    A = (stepSeconds / node->horLen) * qIn;
     B = alpha * beta * cNode->states[STATE_KW_PO] * backDiffq;
     C = stepSeconds * newInWater;
     D = stepSeconds / node->horLen;
@@ -360,28 +369,7 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
     float estq = (A + B + C) / (D + E); // cms/m
     float rhs = A + alpha * pow(cNode->states[STATE_KW_PO], beta) +
                 stepSeconds * newInWater;
-    for (int itr = 0; itr < 10; itr++) {
-      float resError =
-          (stepSeconds / node->horLen) * estq + alpha * pow(estq, beta) - rhs;
-      if (!std::isfinite(resError)) {
-        resError = 0.0;
-      }
-      if (fabsf(resError) < 0.01) {
-        break;
-      }
-      float resErrorD1 =
-          (stepSeconds / node->horLen) + alpha * beta * pow(estq, beta - 1.0);
-      if (!std::isfinite(resErrorD1)) {
-        resErrorD1 = 1.0;
-      }
-      estq = estq - resError / resErrorD1;
-      if (estq < 0) {
-        estq = 0.0;
-      }
-    }
-    if (estq < 0) {
-      estq = 0.0;
-    }
+    estq = SolveKW(D, alpha, beta, rhs, estq);
     float newq = estq;
 
     cNode->states[STATE_KW_PO] = newq;
@@ -404,34 +392,13 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
 
     A = (stepSeconds / node->horLen) * cNode->incomingWaterChannel;
     B = alpha * beta * cNode->states[STATE_KW_PQ] * backDiffQ;
-    C = stepSeconds * newq;
+    float lateral = newq * cNode->flowWidth / node->horLen; // m^2/s
+    C = stepSeconds * lateral;
     D = stepSeconds / node->horLen;
     E = alpha * beta * backDiffQ;
     float estQ = (A + B + C) / (D + E); // cms
-    rhs =
-        A + alpha * pow(cNode->states[STATE_KW_PQ], beta) + stepSeconds * newq;
-    for (int itr = 0; itr < 10; itr++) {
-      float resError =
-          (stepSeconds / node->horLen) * estQ + alpha * pow(estQ, beta) - rhs;
-      if (!std::isfinite(resError)) {
-        resError = 0.0;
-      }
-      if (fabsf(resError) < 0.01) {
-        break;
-      }
-      float resErrorD1 =
-          (stepSeconds / node->horLen) + alpha * beta * pow(estQ, beta - 1.0);
-      if (!std::isfinite(resErrorD1)) {
-        resErrorD1 = 1.0;
-      }
-      estQ = estQ - resError / resErrorD1;
-      if (estQ < 0) {
-        estQ = 0.0;
-      }
-    }
-    if (estQ < 0) {
-      estQ = 0.0;
-    }
+    rhs = A + alpha * pow(cNode->states[STATE_KW_PQ], beta) + C;
+    estQ = SolveKW(D, alpha, beta, rhs, estQ);
     float newWater = estQ;
     /*if (newWater != newWater) {
     printf("New water is %f (%f, %f) %f %f [%f %f %f %f %f] %f %f\n", newWater,
@@ -737,14 +704,23 @@ void KWRoute::BuildSchedule() {
 }
 
 void KWRoute::GatherInflow(unsigned long index, KWGridNode *cNode) {
-  // Overland flow from non-channel upstream nodes, channel flow from channel
-  // ones, summed in the order the serial sweep added them
+  // Overland flow (m^3/s) from non-channel upstream nodes and channel flow
+  // from channel ones, summed in the order the serial sweep added them
   for (unsigned int e = upStart[index]; e < upStart[index + 1]; e++) {
     KWGridNode *upNode = &(kwNodes[upNodes[e]]);
     if (upNode->channelGridCell) {
       cNode->incomingWaterChannel += upNode->incomingWater[KW_LAYER_FASTFLOW];
     } else {
-      cNode->incomingWaterOverland += upNode->incomingWater[KW_LAYER_FASTFLOW];
+      cNode->incomingWaterOverland +=
+          upNode->incomingWater[KW_LAYER_FASTFLOW] * upNode->flowWidth;
+    }
+  }
+
+  // Channel cells use the interflow leaked into them while routing; other
+  // cells add it to their reservoir after the sweep
+  if (cNode->channelGridCell) {
+    for (unsigned int e = leakStart[index]; e < leakStart[index + 1]; e++) {
+      cNode->incomingWater[KW_LAYER_BASEFLOW] += leakOut[leakSrc[e]];
     }
   }
 }
