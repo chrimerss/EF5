@@ -204,6 +204,10 @@ bool KWRoute::Route(float stepHours, std::vector<float> *fastFlow,
     BuildSchedule();
   }
 
+  if (levelStart.empty()) {
+    return false; // BuildSchedule failed and said why
+  }
+
   long numNodes = (long)nodes->size();
   long numLevels = (long)levelStart.size() - 1;
 
