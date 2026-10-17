@@ -293,13 +293,15 @@ void CRESTPHYSModel::WaterBalanceInt(GridNode *node, CRESTPHYSGridNode *cNode,
   }
 
   // Modified by Allen 02/14/23, we drain soil moisture based on a rate factor KSOIL
-  double soil2gw=Wo*cNode->params[PARAM_CRESTPHYS_KSOIL];
+  // KSOIL is the fraction drained per hour, compounded over the time step
+  double soil2gw =
+      Wo * (1.0 - pow(1.0 - cNode->params[PARAM_CRESTPHYS_KSOIL], stepHours));
   if (Wo>=soil2gw){
     Wo-= soil2gw;
   }
   else{
-    Wo = 0.0;
     soil2gw=Wo;
+    Wo = 0.0;
   }
 
   cNode->states[STATE_CRESTPHYS_SM] = Wo;
@@ -321,8 +323,9 @@ void CRESTPHYSModel::WaterBalanceInt(GridNode *node, CRESTPHYSGridNode *cNode,
   else{
     baseflowExcess=0.0;
   }
+  // GWC is in mm per hour
   double baseflowExp= cNode->params[PARAM_CRESTPHYS_GWC]*(exp(cNode->params[PARAM_CRESTPHYS_GWE]*
-                        cNode->states[STATE_CRESTPHYS_GW]/cNode->params[PARAM_CRESTPHYS_HMAXAQ])-1);
+                        cNode->states[STATE_CRESTPHYS_GW]/cNode->params[PARAM_CRESTPHYS_HMAXAQ])-1)*stepHours;
   // printf("GWC: %f, GWE: %f, GW: %f, HMAX: %f, baseflow: %f\n", cNode->params[PARAM_CRESTPHYS_GWC],
   //   cNode->params[PARAM_CRESTPHYS_GWE], cNode->states[STATE_CRESTPHYS_GW],cNode->params[PARAM_CRESTPHYS_HMAXAQ], baseflowExp);
   // printf("groundwater 3: %f\n", cNode->states[STATE_CRESTPHYS_GW]);                      
@@ -452,6 +455,12 @@ void CRESTPHYSModel::InitializeParameters(
 
     if (cNode->params[PARAM_CRESTPHYS_GWC]<0.0){
       cNode->params[PARAM_CRESTPHYS_GWC]=0;
+    }
+
+    if (cNode->params[PARAM_CRESTPHYS_KSOIL]<0.0){
+      cNode->params[PARAM_CRESTPHYS_KSOIL]=0;
+    } else if (cNode->params[PARAM_CRESTPHYS_KSOIL]>1.0){
+      cNode->params[PARAM_CRESTPHYS_KSOIL]=1.0;
     }
 
   }
