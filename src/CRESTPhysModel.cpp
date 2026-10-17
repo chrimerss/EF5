@@ -113,7 +113,7 @@ bool CRESTPHYSModel::WaterBalance(float stepHours,
   size_t numNodes = nodes->size();
 
 #if _OPENMP
-  //#pragma omp parallel for
+#pragma omp parallel for
 #endif
   for (size_t i = 0; i < numNodes; i++) {
     GridNode *node = &nodes->at(i);

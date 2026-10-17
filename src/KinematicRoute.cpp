@@ -1,6 +1,8 @@
 #include "KinematicRoute.h"
 #include "AscGrid.h"
 #include "DatedName.h"
+#include "Messages.h"
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -168,18 +170,40 @@ bool KWRoute::Route(float stepHours, std::vector<float> *fastFlow,
   if (!initialized) {
     initialized = true;
     InitializeRouting(stepHours * 3600.0f);
+    BuildSchedule();
   }
 
-  size_t numNodes = nodes->size();
+  long numNodes = (long)nodes->size();
+  long numLevels = (long)levelStart.size() - 1;
 
-  for (long i = numNodes - 1; i >= 0; i--) {
-    KWGridNode *cNode = &(kwNodes[i]);
-    RouteInt(stepHours * 3600.0f, &(nodes->at(i)), cNode, fastFlow->at(i),
-             interFlow->at(i), baseFlow->at(i));
+  // Sweep from the headwaters down, one level at a time
+#if _OPENMP
+#pragma omp parallel
+#endif
+  for (long l = 0; l < numLevels; l++) {
+#if _OPENMP
+#pragma omp for schedule(static)
+#endif
+    for (long k = levelStart[l]; k < (long)levelStart[l + 1]; k++) {
+      unsigned long i = levelNodes[k];
+      KWGridNode *cNode = &(kwNodes[i]);
+      GatherInflow(i, cNode);
+      RouteInt(stepHours * 3600.0f, &(nodes->at(i)), cNode, fastFlow->at(i),
+               interFlow->at(i), baseFlow->at(i));
+    }
   }
 
-  for (size_t i = 0; i < numNodes; i++) {
+#if _OPENMP
+#pragma omp parallel for
+#endif
+  for (long i = 0; i < numNodes; i++) {
     KWGridNode *cNode = &(kwNodes[i]);
+    if (!cNode->channelGridCell) {
+      // Interflow leaked into this cell during the sweep
+      for (unsigned int e = leakStart[i]; e < leakStart[i + 1]; e++) {
+        cNode->incomingWater[KW_LAYER_BASEFLOW] += leakOut[leakSrc[e]];
+      }
+    }
     interFlow->at(i) = 0.0; // cNode->incomingWater[KW_LAYER_INTERFLOW];
     baseFlow ->at(i)=  0.0; // cNode->incomingWater[KW_LAYER_BASEFLOW];
     fastFlow->at(i) = 0.0; // cNode->incomingWater[KW_LAYER_FASTFLOW];
@@ -265,11 +289,8 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
     float newq = estq;
 
     cNode->states[STATE_KW_PQ] = newq;
-    if (node->downStreamNode != INVALID_DOWNSTREAM_NODE) {
-      kwNodes[nodes->at(node->downStreamNode).modelIndex]
-          .incomingWaterOverland += newq;
-    }
 
+    // The downstream node pulls this in GatherInflow
     cNode->incomingWater[KW_LAYER_FASTFLOW] = newq;
 
     // Add Interflow Excess Water to Reservoir
@@ -292,8 +313,8 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
       cNode->routeCNode[0][KW_LAYER_INTERFLOW]->incomingWater[KW_LAYER_INTERFLOW]);
       }*/
       // printf("0 got here... incoming base flow: %f, leakAmount: %f\n",cNode->routeCNode[0][KW_LAYER_INTERFLOW]->incomingWater[KW_LAYER_INTERFLOW], leakAmount);
-      cNode->routeCNode[0][KW_LAYER_BASEFLOW]->incomingWater[KW_LAYER_BASEFLOW] += leakAmount;
-      //*res += leakAmount; // Make this an atomic add for parallelization
+      // The receiving node pulls this from leakOut
+      leakOut[2 * node->modelIndex] = leakAmount;
     }
 
 
@@ -303,8 +324,7 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
           node->area / cNode->routeNode[1][KW_LAYER_INTERFLOW]->area;
       double leakAmount = interflowLeak1;
       // printf(" 1 got %f ", leakAmount);
-      double *res = &(cNode->routeCNode[1][KW_LAYER_BASEFLOW]->incomingWater[KW_LAYER_BASEFLOW]);
-      *res += leakAmount; // Make this an atomic add for parallelization
+      leakOut[2 * node->modelIndex + 1] = leakAmount;
     }
 
 
@@ -420,10 +440,7 @@ void KWRoute::RouteInt(float stepSeconds, GridNode *node, KWGridNode *cNode,
     }*/
     cNode->states[STATE_KW_PQ] =
         newWater; // Update previous Q for further routing if "steps" > 1
-    if (node->downStreamNode != INVALID_DOWNSTREAM_NODE) {
-      kwNodes[nodes->at(node->downStreamNode).modelIndex]
-          .incomingWaterChannel += newWater;
-    }
+    // The downstream node pulls this in GatherInflow
 
     cNode->incomingWater[KW_LAYER_FASTFLOW] = newWater;
     cNode->incomingWater[KW_LAYER_INTERFLOW] = 0.0;
@@ -519,6 +536,9 @@ void KWRoute::InitializeRouting(float timeSeconds) {
   // This pass distributes parameters & calculates the time it takes for water
   // to cross the grid cell.
   size_t numNodes = nodes->size();
+#if _OPENMP
+#pragma omp parallel for
+#endif
   for (size_t i = 0; i < numNodes; i++) {
     GridNode *node = &nodes->at(i);
     KWGridNode *cNode = &(kwNodes[i]);
@@ -532,6 +552,9 @@ void KWRoute::InitializeRouting(float timeSeconds) {
   }
 
   // This pass figures out which cell water is routed to
+#if _OPENMP
+#pragma omp parallel for
+#endif
   for (size_t i = 0; i < numNodes; i++) {
     GridNode *currentNode, *previousNode;
     float currentSeconds, previousSeconds;
@@ -595,6 +618,133 @@ void KWRoute::InitializeRouting(float timeSeconds) {
       cNode->routeAmount[1][KW_LAYER_INTERFLOW] = 0.0;
       cNode->routeAmount[0][KW_LAYER_BASEFLOW] = 1.0;
       cNode->routeAmount[1][KW_LAYER_BASEFLOW] = 0.0;      
+    }
+  }
+}
+
+void KWRoute::BuildSchedule() {
+
+  size_t numNodes = nodes->size();
+  if (numNodes >= UINT_MAX / 2) {
+    ERROR_LOGF("Too many nodes (%lu) for the routing schedule!",
+               (unsigned long)numNodes);
+    return;
+  }
+
+  // A node's level is the longest path to it from the headwaters, so all of
+  // its upstream nodes sit in lower levels
+  std::vector<unsigned int> level(numNodes, 0), pending(numNodes, 0);
+  std::vector<unsigned int> ready;
+  for (size_t i = 0; i < numNodes; i++) {
+    GridNode *node = &nodes->at(i);
+    if (node->downStreamNode != INVALID_DOWNSTREAM_NODE) {
+      pending[node->downStreamNode]++;
+    }
+  }
+  for (size_t i = 0; i < numNodes; i++) {
+    if (pending[i] == 0) {
+      ready.push_back(i);
+    }
+  }
+  size_t visited = 0;
+  unsigned int numLevels = 0;
+  while (!ready.empty()) {
+    unsigned int i = ready.back();
+    ready.pop_back();
+    visited++;
+    if (level[i] + 1 > numLevels) {
+      numLevels = level[i] + 1;
+    }
+    unsigned long down = nodes->at(i).downStreamNode;
+    if (down != INVALID_DOWNSTREAM_NODE) {
+      if (level[down] < level[i] + 1) {
+        level[down] = level[i] + 1;
+      }
+      if (--pending[down] == 0) {
+        ready.push_back(down);
+      }
+    }
+  }
+  if (visited != numNodes) {
+    WARNING_LOGF("%lu nodes are in a flow direction loop!",
+                 (unsigned long)(numNodes - visited));
+  }
+
+  // Group the nodes by level, in increasing index within each level
+  levelStart.assign(numLevels + 1, 0);
+  for (size_t i = 0; i < numNodes; i++) {
+    levelStart[level[i] + 1]++;
+  }
+  for (unsigned int l = 0; l < numLevels; l++) {
+    levelStart[l + 1] += levelStart[l];
+  }
+  std::vector<unsigned int> fill(levelStart.begin(), levelStart.end() - 1);
+  levelNodes.resize(numNodes);
+  for (size_t i = 0; i < numNodes; i++) {
+    levelNodes[fill[level[i]]++] = i;
+  }
+
+  // Direct upstream nodes in decreasing index, the order the serial sweep
+  // pushed them downstream
+  upStart.assign(numNodes + 1, 0);
+  for (size_t i = 0; i < numNodes; i++) {
+    unsigned long down = nodes->at(i).downStreamNode;
+    if (down != INVALID_DOWNSTREAM_NODE) {
+      upStart[down + 1]++;
+    }
+  }
+  for (size_t i = 0; i < numNodes; i++) {
+    upStart[i + 1] += upStart[i];
+  }
+  fill.assign(upStart.begin(), upStart.end() - 1);
+  upNodes.resize(upStart[numNodes]);
+  for (long i = numNodes - 1; i >= 0; i--) {
+    unsigned long down = nodes->at(i).downStreamNode;
+    if (down != INVALID_DOWNSTREAM_NODE) {
+      upNodes[fill[down]++] = i;
+    }
+  }
+
+  // Interflow leak sources of each node, also in decreasing source index
+  leakStart.assign(numNodes + 1, 0);
+  for (size_t i = 0; i < numNodes; i++) {
+    KWGridNode *cNode = &(kwNodes[i]);
+    for (int slot = 0; slot < 2 && !cNode->channelGridCell; slot++) {
+      if (cNode->routeCNode[slot][KW_LAYER_INTERFLOW]) {
+        leakStart[cNode->routeNode[slot][KW_LAYER_INTERFLOW]->modelIndex + 1]++;
+      }
+    }
+  }
+  for (size_t i = 0; i < numNodes; i++) {
+    leakStart[i + 1] += leakStart[i];
+  }
+  fill.assign(leakStart.begin(), leakStart.end() - 1);
+  leakSrc.resize(leakStart[numNodes]);
+  for (long i = numNodes - 1; i >= 0; i--) {
+    KWGridNode *cNode = &(kwNodes[i]);
+    for (int slot = 0; slot < 2 && !cNode->channelGridCell; slot++) {
+      if (cNode->routeCNode[slot][KW_LAYER_INTERFLOW]) {
+        unsigned long target =
+            cNode->routeNode[slot][KW_LAYER_INTERFLOW]->modelIndex;
+        leakSrc[fill[target]++] = 2 * i + slot;
+      }
+    }
+  }
+  leakOut.assign(2 * numNodes, 0.0);
+
+  INFO_LOGF("Kinematic wave routing schedule has %u levels for %lu nodes",
+            numLevels, (unsigned long)numNodes);
+}
+
+void KWRoute::GatherInflow(unsigned long index, KWGridNode *cNode) {
+  // Overland flow from non-channel upstream nodes, channel flow from channel
+  // ones, summed in the order the serial sweep added them
+  for (unsigned int e = upStart[index]; e < upStart[index + 1]; e++) {
+    KWGridNode *upNode = &(kwNodes[upNodes[e]]);
+    if (upNode->channelGridCell) {
+      cNode->incomingWaterChannel += upNode->incomingWater[KW_LAYER_FASTFLOW];
+    } else {
+      cNode->incomingWaterOverland += upNode->incomingWater[KW_LAYER_FASTFLOW];
     }
   }
 }
