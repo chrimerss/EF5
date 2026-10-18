@@ -223,11 +223,12 @@ int main(int argc, char **argv) {
   }
   WriteFloatTifGrid((out + "/basic/fam.tif").c_str(), g);
 
-  // Spatially varying parameter grids; the scalars in the control file are 1
+  // Spatially varying parameter grids; the scalars in the control file are 1.
+  // CRESTPHYS reads im_grid as a fraction (only a scalar im is in percent).
   const char *pnames[] = {"wm",    "b",    "im",     "fc",    "hmaxaq",
                           "gwc",   "gwe",  "alpha",  "beta",  "alpha0",
                           "under", "leaki", "th"};
-  const float pbase[] = {150, 0.5, 2,   10,  1000, 0.1,  2,
+  const float pbase[] = {150, 0.5, 0.02, 10,  1000, 0.1,  2,
                          2.0, 0.6, 1.5, 1.0, 0.05, 50.0};
   ValueNoise pn(40, 11);
   for (int p = 0; p < 13; p++) {

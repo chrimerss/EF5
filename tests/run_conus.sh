@@ -2,9 +2,11 @@
 # Runs EF5 (CRESTPHYS + kinematic wave) on the synthetic 1 km CONUS domain at
 # 2-minute steps, writing soil moisture and unit discharge every step, once on
 # 4 threads and once on 1, and fails unless:
-#   - EF5 logs no errors and writes every expected grid, state and results.json
-#   - no grid holds NaN, infinite or negative values, and the last unit
-#     discharge grid is not all zero
+#   - EF5 logs no errors, finds every forcing file, and writes every expected
+#     grid, state and results.json
+#   - every grid covers all land cells with no NaN, infinite or negative
+#     values, and the final discharge state is not all zero (it is unrounded;
+#     the unit discharge grids are rounded to 0.1 m^3/s/km^2)
 #   - the two runs write byte-identical grids
 #
 # Usage: tests/run_conus.sh <ef5 binary> <work dir> [steps] [columns rows]
@@ -74,6 +76,11 @@ EOF
   if grep -aq "ERROR:" "$out/ef5.log"; then
     grep -a "ERROR:" "$out/ef5.log" | head -20; echo "EF5 logged errors"; exit 1
   fi
+  # EF5 runs on with zeros when a forcing file is missing
+  if grep -aq "Missing .* file" "$out/ef5.log"; then
+    grep -ao "Missing [^)]*)" "$out/ef5.log" | head -5
+    echo "EF5 could not find forcing files"; exit 1
+  fi
 }
 
 check() { # threads
@@ -92,8 +99,8 @@ check() { # threads
   done
   [ $missing -eq 0 ] || exit 1
   echo "All ${#expected[@]} expected outputs written on $1 thread(s)"
-  "$WORK/tifcheck" "$out"/*.tif | tail -1
-  "$WORK/tifcheck" --nonzero "$out/unitq.$when.crestphys.tif"
+  "$WORK/tifcheck" --reference "$WORK/domain/basic/dem.tif" "$out"/*.tif | grep -v "^ok"
+  "$WORK/tifcheck" --nonzero "$out/kwr_pCQ_$when.tif"
 }
 
 run 4
