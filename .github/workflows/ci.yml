@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conus:
+    name: Build and run the CONUS experiment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake libtiff-dev libgeotiff-dev zlib1g-dev time
+
+      - name: Build
+        run: |
+          autoreconf --force --install
+          ./configure
+          make -j"$(nproc)"
+
+      - name: Mass balance
+        run: python3 tests/mass_balance/basin_test.py bin/ef5 "$RUNNER_TEMP/mass_balance"
+
+      - name: CONUS experiment (1 km, 2-minute steps, 30 minutes)
+        run: tests/run_conus.sh bin/ef5 "$RUNNER_TEMP/conus" 15
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs
+          path: |
+            config.log
+            ${{ runner.temp }}/mass_balance/*/ef5.log
+            ${{ runner.temp }}/conus/out_t*/ef5.log
+          if-no-files-found: ignore
