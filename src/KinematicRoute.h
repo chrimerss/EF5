@@ -17,6 +17,7 @@ struct KWGridNode : BasicGridNode {
   float states[STATE_KW_QTY];
 
   bool channelGridCell;
+  double flowWidth; // cell area over flow length (m)
   double slopeSqrt;
   double hillSlopeSqrt;
 
@@ -32,7 +33,7 @@ struct KWGridNode : BasicGridNode {
 
   // double previousStreamflow; //cms
   // double previousOverland;
-  double incomingWaterOverland, incomingWaterChannel;
+  double incomingWaterOverland, incomingWaterChannel; // m^3/s
 };
 
 class KWRoute : public RoutingModel {
@@ -61,11 +62,26 @@ private:
   InitializeParameters(std::map<GaugeConfigSection *, float *> *paramSettings,
                        std::vector<FloatGrid *> *paramGrids);
   void InitializeRouting(float timeSeconds);
+  void BuildSchedule();
+  void GatherInflow(unsigned long index, KWGridNode *cNode);
 
   std::vector<GridNode> *nodes;
   std::vector<KWGridNode> kwNodes;
   float maxSpeed;
   bool initialized;
+
+  // Parallel routing schedule. Nodes are grouped into levels so that every
+  // node's upstream neighbours and interflow leak sources are in earlier
+  // levels; nodes within a level are routed concurrently. Each node pulls its
+  // inflow in the same order the serial sweep pushed it, so results do not
+  // depend on the number of threads.
+  std::vector<unsigned int> levelNodes; // node indices grouped by level
+  std::vector<unsigned int> levelStart; // offset of each level in levelNodes
+  std::vector<unsigned int> upStart;    // offset of each node in upNodes
+  std::vector<unsigned int> upNodes;    // direct upstream nodes, decreasing
+  std::vector<unsigned int> leakStart;  // offset of each node in leakSrc
+  std::vector<unsigned int> leakSrc;    // 2 * source + slot, decreasing source
+  std::vector<double> leakOut;          // interflow leak per (source, slot)
 };
 
 #endif

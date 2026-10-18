@@ -1757,6 +1757,9 @@ void Simulator::SimulateDistributed(bool trackPeaks) {
     gridWriter.WriteGrid(&nodes, &qpfAccum, buffer, false);
   }
 
+  // Every grid is on disk before results.json marks the run as finished
+  gridWriter.Flush();
+
 #if _OPENMP
   double simEndTime = omp_get_wtime();
   double timeDiff = simEndTime - simStartTime;

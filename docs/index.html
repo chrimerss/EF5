@@ -308,12 +308,12 @@ iwu=50.0
 <span class="namec">B:</span> The exponent of the variable infiltration curve.<br />
 <span class="namec">IM:</span> The impervious area ratio. (% between 0 and 100)<br />
 <span class="namec">KE:</span> The multiplier to convert between input PET and local actual ET.<br />
-<span class="namec">KSOIL:</span> The coefficient to drain soil moisture into groundwater (0-1)<br />
+<span class="namec">KSOIL:</span> The fraction of soil moisture drained into groundwater per hour (0-1)<br />
 <span class="namec">FC:</span> The soil saturated hydraulic conductivity (Ksat). (mm hr<sup>-1</sup>) <br />
 <span class="namec">IWU:</span> The initial value of soil water. This is a percentage of the WM. (% between 0 and 100)<br />
 <span class="namec">IGW:</span> The initial value of groundwater. This is a percentage of the HMAXAQ. (% between 0 and 100)<br />
 <span class="namec">HMAXAQ:</span> The maximum groundwater depth (m) <br />
-<span class="namec">GWC:</span> The coefficient (multiplier) to partition groundwater and baseflow<br />
+<span class="namec">GWC:</span> The coefficient (multiplier) to partition groundwater and baseflow, in mm per hour<br />
 <span class="namec">GWE:</span> The exponent to partition groundwater and baseflow<br />
 <br />
 
@@ -543,6 +543,7 @@ TASK=RunFF
 				<li><a name="run">Running EF5</a></li>
 				<pre class="pree">ef5 [controlfile]</pre>
 				<p>Running ef5 is straight forwarded, you can called the executable with no arguments and it will assume a default configuration file name of "control.txt" in the current working directory or you can pass in a configuration file name as an argument.</p>
+				<p>EF5 runs the water balance and routing on all cores through OpenMP; set the OMP_NUM_THREADS environment variable to use fewer. Gridded outputs and states are compressed and written on a separate background thread while the next time step runs, so when simulating faster than real time (for example a hindcast), set OMP_NUM_THREADS to one less than the number of cores to leave that thread a core of its own.</p>
 				<li><a name="cali">Calibrating the Models</a></li>
 				<p>This section will be filled in once calibration methods are implemented.</p>
 				<li>Appendix</li>
