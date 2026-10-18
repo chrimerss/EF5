@@ -543,6 +543,7 @@ TASK=RunFF
 				<li><a name="run">Running EF5</a></li>
 				<pre class="pree">ef5 [controlfile]</pre>
 				<p>Running ef5 is straight forwarded, you can called the executable with no arguments and it will assume a default configuration file name of "control.txt" in the current working directory or you can pass in a configuration file name as an argument.</p>
+				<p>EF5 runs the water balance and routing on all cores through OpenMP; set the OMP_NUM_THREADS environment variable to use fewer. Gridded outputs and states are compressed and written on a separate background thread while the next time step runs, so when simulating faster than real time (for example a hindcast), set OMP_NUM_THREADS to one less than the number of cores to leave that thread a core of its own.</p>
 				<li><a name="cali">Calibrating the Models</a></li>
 				<p>This section will be filled in once calibration methods are implemented.</p>
 				<li>Appendix</li>
