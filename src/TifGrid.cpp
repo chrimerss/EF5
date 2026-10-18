@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <limits>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <mutex>
+#endif
 
 #define TIFFTAG_GDAL_METADATA 42112
 #define TIFFTAG_GDAL_NODATA 42113
@@ -49,19 +52,32 @@ static void TIFFDefaultDirectory(TIFF *tif) {
   }
 }
 
+#ifndef _WIN32
+// GridWriterFull writes TIFFs on a background thread. Opening a file runs the
+// one-time global setup of TIFFExtenderInit and libgeotiff, so opens are
+// serialized; open files are independent of each other.
+static std::mutex openLock;
+#endif
+
+static TIFF *OpenTif(const char *file, const char *mode) {
+#ifndef _WIN32
+  std::lock_guard<std::mutex> guard(openLock);
+#endif
+  TIFFExtenderInit();
+  return XTIFFOpen(file, mode);
+}
+
 FloatGrid *ReadFloatTifGrid(const char *file) {
   return ReadFloatTifGrid(file, NULL);
 }
 
 FloatGrid *ReadFloatTifGrid(const char *file, FloatGrid *incGrid) {
 
-  TIFFExtenderInit();
-
   FloatGrid *grid = incGrid;
   TIFF *tif = NULL;
   GTIF *gtif = NULL;
 
-  tif = XTIFFOpen(file, "r");
+  tif = OpenTif(file, "r");
   if (!tif) {
     return NULL;
   }
@@ -165,12 +181,10 @@ FloatGrid *ReadFloatTifGrid(const char *file, FloatGrid *incGrid) {
 void WriteFloatTifGrid(const char *file, FloatGrid *grid, const char *artist,
                        const char *datetime, const char *copyright) {
 
-  TIFFExtenderInit();
-
   TIFF *tif = NULL;
   GTIF *gtif = NULL;
 
-  tif = XTIFFOpen(file, "w");
+  tif = OpenTif(file, "w");
   if (!tif) {
     return;
   }
@@ -255,9 +269,7 @@ LongGrid *ReadLongTifGrid(const char *file) {
   TIFF *tif = NULL;
   GTIF *gtif = NULL;
 
-  TIFFSetErrorHandler(NULL);
-
-  tif = XTIFFOpen(file, "r");
+  tif = OpenTif(file, "r"); // Also silences libtiff errors
   if (!tif) {
     return NULL;
   }
