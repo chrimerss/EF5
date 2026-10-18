@@ -4,7 +4,7 @@ Ensemble Framework For Flash Flood Forecasting (EF5)
 ![image](img/landing.PNG)
 
 
-![version](https://img.shields.io/badge/version-v1.3.3-blue) [![Build Status](https://travis-ci.org/HyDROSLab/EF5.svg?branch=master)](https://travis-ci.org/HyDROSLab/EF5) ![lastCommit](https://img.shields.io/github/last-commit/chrimerss/EF5)
+![version](https://img.shields.io/badge/version-v1.3.3-blue) [![CI](https://github.com/chrimerss/EF5/actions/workflows/ci.yml/badge.svg)](https://github.com/chrimerss/EF5/actions/workflows/ci.yml) ![lastCommit](https://img.shields.io/github/last-commit/chrimerss/EF5)
 
 EF5 was created by the Hydrometeorology and Remote Sensing Laboratory at the University of Oklahoma.
 The goal of EF5 is to have a framework for distributed hydrologic modeling that is user friendly, adaptable, expandable, all while being suitable for large scale (e.g. continental scale) modeling of flash floods with rapid forecast updates. Currently EF5 incorporates 3 water balance models including the Sacramento Soil Moisture Accouning Model (SAC-SMA), Coupled Routing and Excess Storage (CREST), and hydrophobic (HP). These water balance models can be coupled with either linear reservoir or kinematic wave routing. 
@@ -41,6 +41,13 @@ Clone the source code from GitHub.
 
 3. make   
    This compiles the EF5 application!
+
+## Testing
+
+Every pull request runs `.github/workflows/ci.yml`, which builds EF5 and runs two checks that you can also run yourself after `./configure && make`:
+
+1. `python3 tests/mass_balance/basin_test.py bin/ef5 /tmp/mass_balance` rains on a small single-outlet basin and checks that the outlet discharge returns the rain to within 1%, for subsurface and overland flow at 2- to 60-minute steps.
+2. `tests/run_conus.sh bin/ef5 /tmp/conus 15` generates a synthetic CONUS domain on the 1 km MRMS grid (about 9.5 million cells) and runs CRESTPHYS with kinematic wave routing for 15 two-minute steps, writing soil moisture and unit discharge. It fails if EF5 logs an error, misses an output, writes NaN, infinite or negative values, or gives different results on 1 and 4 threads. It needs about 7 GB of memory; add `3500 1750` to run a quarter-size domain instead.
 
 ## Contributors
 
