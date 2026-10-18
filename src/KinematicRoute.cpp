@@ -637,8 +637,10 @@ void KWRoute::BuildSchedule() {
     }
   }
   if (visited != numNodes) {
-    WARNING_LOGF("%lu nodes are in a flow direction loop!",
-                 (unsigned long)(numNodes - visited));
+    ERROR_LOGF("%lu nodes are in a flow direction loop, routing is disabled!",
+               (unsigned long)(numNodes - visited));
+    levelStart.clear(); // Route checks for this
+    return;
   }
 
   // Group the nodes by level, in increasing index within each level
